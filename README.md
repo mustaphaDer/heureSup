@@ -4,6 +4,10 @@
 
 A comprehensive application for managing additional teaching hours, schedules, grades, and teacher salary calculations for educational institutions.
 
+> **Note on authorship:** This repository is a copy of an existing project, kept for study and reference.
+> All original code was written by the authors listed under [Credits](#-credits) below.
+> The commit history retains the original authors and dates. This copy does not claim authorship of that work.
+
 ## 🚀 Features
 
 - **Authentication System**: Secure login for different user roles
@@ -99,12 +103,22 @@ The API provides the following endpoints:
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+No `LICENSE` file is included in the original project. The original authors have not granted an
+explicit license, so the code remains under their copyright (all rights reserved) by default.
+The "MIT License" statement previously in this README was inaccurate. If you intend to reuse,
+redistribute or build on this code, contact the original authors for permission.
 
-## 👥 Contributors
+## 👥 Credits
 
-- [Mehdi mohamedb amdjad](https://github.com/amdjadmoh)
-- [Chikahoui chihab](https://github.com/Chihab0)
+Original project: **[amdjadmoh/heureSup](https://github.com/amdjadmoh/heureSup)**
+
+Written by:
+
+- [Mehdi Mohamed Amdjad](https://github.com/amdjadmoh) — 33 commits
+- [Chikhaoui Youcef Chihab Eddine](https://github.com/Chihab0) — 12 commits
+
+This copy is hosted by [Mustapha Derrah](https://github.com/derrah-mustapha) for reference only.
+The original commit authors and dates are preserved in the history; no authorship is claimed over them.
 
 ## 📊 External API Integration
 
