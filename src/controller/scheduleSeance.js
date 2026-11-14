@@ -1,6 +1,7 @@
 const { db } = require("../db/index.js");
 const { Schedule, Seance, User, SemesterEnum, DayEnum, SeanceTypeEnum, Promotion, Speciality, Teacher } = require("../db/schema.js");
-const { sql, eq } = require("drizzle-orm");
+const { sql, eq, and } = require("drizzle-orm");
+const { wantsPagination, parsePagination, buildPaginationMeta } = require("../lib/pagination.js");
 
 exports.createSchedule = async (req, res) => {
   try {
@@ -116,8 +117,55 @@ exports.createSchedule = async (req, res) => {
 
 exports.getSchedules = async (req, res) => {
   try {
-    const schedules = await db.select().from(Schedule).innerJoin(Promotion,eq(Schedule.promotionId,Promotion.id));
-    return res.status(200).json({ schedules });
+    const filters = [];
+
+    if (req.query.educationalYear !== undefined) {
+      filters.push(eq(Schedule.educationalYear, String(req.query.educationalYear)));
+    }
+
+    if (req.query.semester !== undefined) {
+      const semester = String(req.query.semester);
+      if (!SemesterEnum.enumValues.includes(semester)) {
+        return res.status(400).json({
+          error: `semester must be one of: ${SemesterEnum.enumValues.join(", ")}`,
+        });
+      }
+      filters.push(eq(Schedule.semester, semester));
+    }
+
+    if (req.query.promotionId !== undefined) {
+      const promotionId = Number(req.query.promotionId);
+      if (!Number.isInteger(promotionId)) {
+        return res.status(400).json({ error: "promotionId must be an integer" });
+      }
+      filters.push(eq(Schedule.promotionId, promotionId));
+    }
+
+    const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+    const schedulesQuery = () =>
+      db.select().from(Schedule).innerJoin(Promotion, eq(Schedule.promotionId, Promotion.id));
+
+    // Unfiltered, unpaginated requests keep the original response shape.
+    if (!wantsPagination(req.query) && !whereClause) {
+      const schedules = await schedulesQuery();
+      return res.status(200).json({ schedules });
+    }
+
+    const { page, limit, offset } = parsePagination(req.query);
+
+    let query = schedulesQuery();
+    if (whereClause) query = query.where(whereClause);
+    const schedules = await query.limit(limit).offset(offset);
+
+    let countQuery = db.select({ count: sql`count(*)::int` }).from(Schedule);
+    if (whereClause) countQuery = countQuery.where(whereClause);
+    const [{ count: total }] = await countQuery;
+
+    return res.status(200).json({
+      schedules,
+      pagination: buildPaginationMeta({ page, limit, offset }, total, schedules.length),
+    });
   } catch (error) {
     console.error("Error fetching schedules:", error);
     return res.status(500).json({ error: "Internal server error" });
@@ -418,13 +466,72 @@ exports.getSeances = async (req, res) => {
     }
 
     // Get seances for this schedule
-    const seances = await db
-      .select()
-      .from(Seance)
-      .innerJoin(User, sql`${Seance.teacherId} = ${User.id}`)
-      .where(sql`${Seance.scheduleID} = ${scheduleId}`);
+    const filters = [eq(Seance.scheduleID, Number(scheduleId))];
 
-    return res.status(200).json({ seances });
+    if (req.query.day !== undefined) {
+      const day = String(req.query.day);
+      if (!DayEnum.enumValues.includes(day)) {
+        return res.status(400).json({
+          error: `day must be one of: ${DayEnum.enumValues.join(", ")}`,
+        });
+      }
+      filters.push(eq(Seance.day, day));
+    }
+
+    if (req.query.type !== undefined) {
+      const type = String(req.query.type);
+      if (!SeanceTypeEnum.enumValues.includes(type)) {
+        return res.status(400).json({
+          error: `type must be one of: ${SeanceTypeEnum.enumValues.join(", ")}`,
+        });
+      }
+      filters.push(eq(Seance.type, type));
+    }
+
+    if (req.query.teacherId !== undefined) {
+      const teacherId = Number(req.query.teacherId);
+      if (!Number.isInteger(teacherId)) {
+        return res.status(400).json({ error: "teacherId must be an integer" });
+      }
+      filters.push(eq(Seance.teacherId, teacherId));
+    }
+
+    if (req.query.module !== undefined && String(req.query.module).trim() !== "") {
+      filters.push(sql`${Seance.module} ILIKE ${`%${String(req.query.module).trim()}%`}`);
+    }
+
+    const whereClause = and(...filters);
+    const isPlainRequest =
+      !wantsPagination(req.query) &&
+      req.query.day === undefined &&
+      req.query.type === undefined &&
+      req.query.teacherId === undefined &&
+      req.query.module === undefined;
+
+    const seancesQuery = () =>
+      db
+        .select()
+        .from(Seance)
+        .innerJoin(User, sql`${Seance.teacherId} = ${User.id}`)
+        .where(whereClause);
+
+    if (isPlainRequest) {
+      const seances = await seancesQuery();
+      return res.status(200).json({ seances });
+    }
+
+    const { page, limit, offset } = parsePagination(req.query);
+    const seances = await seancesQuery().limit(limit).offset(offset);
+
+    const [{ count: total }] = await db
+      .select({ count: sql`count(*)::int` })
+      .from(Seance)
+      .where(whereClause);
+
+    return res.status(200).json({
+      seances,
+      pagination: buildPaginationMeta({ page, limit, offset }, total, seances.length),
+    });
   } catch (error) {
     console.error("Error fetching seances:", error);
     return res.status(500).json({ error: "Internal server error" });

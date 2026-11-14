@@ -5,6 +5,8 @@ import { sql } from "drizzle-orm";
 import { User } from "../db/schema.js";
 import {createGradeSession} from "./gradeSession.js";
 import { RoleEnums } from  "../db/schema.js";
+import { TeacherTypeEnum } from "../db/schema.js";
+import { wantsPagination, parsePagination, buildPaginationMeta } from "../lib/pagination.js";
 import {Schedule ,Seance} from "../db/schema.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -15,8 +17,66 @@ config();
 
 export const getTeachers = async (req, res) => {
     try {
-        const teachers = await db.select().from(Teacher).innerJoin(User, eq(User.id,Teacher.id)).innerJoin(Grade, eq(Grade.id,Teacher.gradeId));
-        return res.status(200).json(teachers);
+        const filters = [];
+
+        if (req.query.gradeId !== undefined) {
+            const gradeId = Number(req.query.gradeId);
+            if (!Number.isInteger(gradeId)) {
+                return res.status(400).json({ error: "gradeId must be an integer" });
+            }
+            filters.push(eq(Teacher.gradeId, gradeId));
+        }
+
+        if (req.query.teacherType !== undefined) {
+            const teacherType = String(req.query.teacherType);
+            if (!TeacherTypeEnum.enumValues.includes(teacherType)) {
+                return res.status(400).json({
+                    error: `teacherType must be one of: ${TeacherTypeEnum.enumValues.join(", ")}`,
+                });
+            }
+            filters.push(eq(Teacher.teacherType, teacherType));
+        }
+
+        if (req.query.search !== undefined && String(req.query.search).trim() !== "") {
+            const term = `%${String(req.query.search).trim()}%`;
+            filters.push(
+                sql`(${User.firstName} ILIKE ${term} OR ${User.lastName} ILIKE ${term} OR ${User.email} ILIKE ${term})`
+            );
+        }
+
+        const whereClause = filters.length > 0 ? and(...filters) : undefined;
+
+        const teachersQuery = () =>
+            db
+                .select()
+                .from(Teacher)
+                .innerJoin(User, eq(User.id, Teacher.id))
+                .innerJoin(Grade, eq(Grade.id, Teacher.gradeId));
+
+        // No filters and no pagination requested => keep the historical shape
+        // (a bare array) so existing clients keep working.
+        if (!wantsPagination(req.query) && !whereClause) {
+            const teachers = await teachersQuery();
+            return res.status(200).json(teachers);
+        }
+
+        const { page, limit, offset } = parsePagination(req.query);
+
+        let query = teachersQuery();
+        if (whereClause) query = query.where(whereClause);
+        const teachers = await query.limit(limit).offset(offset);
+
+        let countQuery = db
+            .select({ count: sql`count(*)::int` })
+            .from(Teacher)
+            .innerJoin(User, eq(User.id, Teacher.id));
+        if (whereClause) countQuery = countQuery.where(whereClause);
+        const [{ count: total }] = await countQuery;
+
+        return res.status(200).json({
+            teachers,
+            pagination: buildPaginationMeta({ page, limit, offset }, total, teachers.length),
+        });
     } catch (error) {
         console.error("Error fetching teachers:", error);
         return res.status(500).json({ error: "Internal server error" });
