@@ -1,24 +1,11 @@
 import { Schedule, Teacher, Seance, Grade, SeanceTypeCoefficient, Holiday, Absence ,externalSeances} from "../db/schema.js";   
 import { db } from "../db/index.js";
 import { sql, inArray, eq } from "drizzle-orm";
-
-// Define day order for sorting
-const dayOrder = {
-  "monday": 1,
-  "tuesday": 2,
-  "wednesday": 3,
-  "thursday": 4,
-  "friday": 5,
-  "saturday": 6,
-  "sunday": 0
-};
-
-// Helper function to calculate time difference (you'll need to implement this)
-function calculateTimeDifference(startTime, endTime) {
-  const start = new Date(`1970-01-01T${startTime}`);
-  const end = new Date(`1970-01-01T${endTime}`);
-  return (end - start) / (1000 * 60 * 60); // Return hours
-}
+import {
+  calculateTimeDifference,
+  sortSeancesByDayAndTime,
+  allocateCharge,
+} from "../lib/heureSup.js";
 
 async function getTeacherSeances(teacherID, startDate, endDate) {
   // get schedules in the date range
@@ -44,17 +31,7 @@ async function getTeacherSeances(teacherID, startDate, endDate) {
   }
 
   // Sort seances by day and start time
-  return seances.map(row => row.Seance).sort((a, b) => {
-    // Compare days first
-    if (dayOrder[a.day] !== dayOrder[b.day]) {
-      return dayOrder[a.day] - dayOrder[b.day];
-    }
-    
-    // If same day, compare times
-    const aTime = new Date(`1970-01-01T${a.startTime}`);
-    const bTime = new Date(`1970-01-01T${b.startTime}`);
-    return aTime - bTime;
-  });
+  return sortSeancesByDayAndTime(seances.map((row) => row.Seance));
 }
 
 async function getTeacherCharge(teacherId) {
@@ -76,76 +53,30 @@ async function getSeanceTypeCoefficients() {
   return seanceTypeCoefMap;
 }
 
-async function processSeance(seance, calculatedCharge, charge, seanceTypeCoefMap) {
-  const startTime = seance.startTime;
-  const endTime = seance.endTime;
-  const durationInHours = calculateTimeDifference(startTime, endTime);
-  const weightedDuration = durationInHours * seanceTypeCoefMap.get(seance.type);
-  
-  // Check if the duration + calculatedCharge is less than the charge
-  if (calculatedCharge + weightedDuration <= charge) {
-    // This seance is fully covered by the teacher's charge
-    return { 
-      calculatedCharge: calculatedCharge + weightedDuration, 
-      heureSupSeances: [] 
-    };
-  } else if (calculatedCharge !== charge) {
-    // This seance is partially covered by the teacher's charge
-    const difference = charge - calculatedCharge;
-    const heureSupDuration = durationInHours - difference;
-    
-    // Update seance heureSupDuration
+/**
+ * Applies the pure charge-allocation rules from src/lib/heureSup.js and
+ * persists the overtime hours on each affected seance.
+ */
+async function calculateHeureSupForSeances(seances, calculatedCharge, charge, seanceTypeCoefMap) {
+  const { calculatedCharge: finalCharge, allocations } = allocateCharge(
+    seances,
+    calculatedCharge,
+    charge,
+    seanceTypeCoefMap
+  );
+
+  for (const { seance, heureSupDuration } of allocations) {
     await db.update(Seance)
       .set({ heureSupDuration })
       .where(eq(Seance.id, seance.id));
-    
-    // Store the seance info with heure sup duration
-    const heureSupSeance = {
-      ...seance,
-      heureSupDuration,
-    };
-    
-    return { 
-      calculatedCharge: charge, 
-      heureSupSeances: [heureSupSeance] 
-    };
-  } else {
-    // This seance is entirely heure sup (charge already filled)
-    await db.update(Seance)
-      .set({ heureSupDuration: durationInHours })
-      .where(eq(Seance.id, seance.id));
-    
-    const heureSupSeance = {
-      ...seance,
-      heureSupDuration: durationInHours,
-
-    };
-    
-    return { 
-      calculatedCharge: charge, 
-      heureSupSeances: [heureSupSeance] 
-    };
-  }
-}
-
-async function calculateHeureSupForSeances(seances, calculatedCharge, charge, seanceTypeCoefMap) {
-  let allHeureSupSeances = [];
-
-  // Process "cours" type seances first
-  for (const seance of seances.filter(seance => seance.type === "cours")) {
-    const result = await processSeance(seance, calculatedCharge, charge, seanceTypeCoefMap);
-    calculatedCharge = result.calculatedCharge;
-    allHeureSupSeances = allHeureSupSeances.concat(result.heureSupSeances);
   }
 
-  // Process "td" and "tp" type seances
-  for (const seance of seances.filter(seance => seance.type === "td" || seance.type === "tp")) {
-    const result = await processSeance(seance, calculatedCharge, charge, seanceTypeCoefMap);
-    calculatedCharge = result.calculatedCharge;
-    allHeureSupSeances = allHeureSupSeances.concat(result.heureSupSeances);
-  }
+  const allHeureSupSeances = allocations.map(({ seance, heureSupDuration }) => ({
+    ...seance,
+    heureSupDuration,
+  }));
 
-  return { calculatedCharge, allHeureSupSeances };
+  return { calculatedCharge: finalCharge, allHeureSupSeances };
 }
 
 const CalculatetHeureSup = async (teacherId, startDate, endDate) => {
