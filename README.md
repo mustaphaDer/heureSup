@@ -72,22 +72,56 @@ The API provides the following endpoints:
    npm install
    ```
 
-3. Create a `.env` file with your configuration:
+3. Create your environment file from the template and fill in real values:
+   ```bash
+   cp .env.example .env
    ```
-   PORT=3000
-   DATABASE_URL=your_database_connection_string
-   JWT_SECRET=your_jwt_secret
+   The connection string variable is `DB_CONNECTION_STRING` (not `DATABASE_URL`), and
+   `JWT_SECRET` must be a long random string — the server will accept any value, so pick a
+   real one. Generate it with:
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
    ```
 
-4. Run database migrations:
+4. Create the database schema:
    ```bash
-   npm run migrate
+   npx drizzle-kit push
    ```
+   > The checked-in files under `drizzle/` cannot be applied in order: `0000` uses the
+   > `grade_name` type that `0001` creates. Use `drizzle-kit push` (schema-first) until the
+   > migration history is regenerated.
 
 5. Start the server:
    ```bash
    npm start
    ```
+
+## 🐳 Quick start with Docker
+
+Runs the API and a PostgreSQL instance together:
+
+```bash
+JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))") \
+  docker compose up --build
+```
+
+The API is then on <http://localhost:3000> and PostgreSQL on `localhost:5432`
+(database `heuresup`, user/password `postgres`/`postgres`). Apply the schema once the
+database is healthy:
+
+```bash
+docker compose exec api npx drizzle-kit push
+```
+
+## 🧪 Tests
+
+```bash
+npm test
+npm run test:watch
+```
+
+The suite uses the built-in `node:test` runner and needs no database: the overtime
+calculation lives in `src/lib/heureSup.js`, which is free of database access.
 
 ## 💻 Development
 
@@ -100,6 +134,30 @@ The API provides the following endpoints:
   ```bash
   npm run generate
   ```
+
+## 🔎 Pagination and filtering
+
+List endpoints accept optional query parameters. A request **without** any of them behaves
+exactly as before, so existing clients keep working.
+
+| Parameter | Applies to | Meaning |
+|---|---|---|
+| `page`, `limit`, `offset` | all list endpoints below | `limit` defaults to 25, caps at 100; `offset` wins over `page` |
+| `gradeId`, `teacherType`, `search` | `GET /api/teacher/get` | `search` matches first name, last name or email (case-insensitive) |
+| `educationalYear`, `semester`, `promotionId` | `GET /api/schedule` | exact match |
+| `day`, `type`, `teacherId`, `module` | `GET /api/schedule/:scheduleId/seances` | `module` is a case-insensitive partial match |
+
+A paginated or filtered request returns the rows plus a `pagination` block:
+
+```jsonc
+{
+  "teachers": [ /* ... */ ],
+  "pagination": { "page": 1, "limit": 25, "total": 42, "totalPages": 2, "hasNextPage": true }
+}
+```
+
+An unknown `teacherType`, `semester`, `day` or `type` value returns `400` listing the
+accepted values.
 
 ## 📝 License
 
