@@ -1,0 +1,39 @@
+# Runs the API against a local PostgreSQL instance.
+#   docker compose up --build
+# Then apply the schema (see README) and the API is on http://localhost:3000
+#
+# No `version:` key on purpose - it is obsolete in Compose v2.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: heuresup
+    ports:
+      - "5432:5432"
+    volumes:
+      - heuresup-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d heuresup"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_CONNECTION_STRING: postgres://postgres:postgres@db:5432/heuresup
+      PORT: 3000
+      NODE_ENV: development
+      # Override in your shell for anything beyond local development.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
+    ports:
+      - "3000:3000"
+
+volumes:
+  heuresup-db:
